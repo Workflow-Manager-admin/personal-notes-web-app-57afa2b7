@@ -16,6 +16,11 @@
 	--column-margin-top: 4rem;
 	font-family: var(--font-body);
 	color: var(--color-text);
+
+	/* notes app color palette */
+	--primary: #3b82f6;
+	--secondary: #2563eb;
+	--accent: #f59e42;
 }
 
 .theme-dark {
