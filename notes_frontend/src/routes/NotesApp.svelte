@@ -1,80 +1,124 @@
 <script lang="ts">
-// Note data structure
-type Note = {
-	id: string;
-	title: string;
-	content: string;
-	created: number;
-	updated: number;
-};
+/*
+	NotesApp.svelte - Svelte UI integrated with Supabase for CRUD operations.
+*/
 
 import { onMount } from 'svelte';
 import NoteList from './NoteList.svelte';
 import NoteEditor from './NoteEditor.svelte';
+import {
+	fetchNotes as supabaseFetchNotes,
+	createNote as supabaseCreateNote,
+	updateNote as supabaseUpdateNote,
+	deleteNote as supabaseDeleteNote,
+	type Note
+} from '$lib/supabaseClient';
 
 let notes: Note[] = [];
 let selectedNoteId: string | null = null;
 let editing: boolean = false;
 let searchTerm: string = '';
 
+let loading: boolean = false;
+let error: string | null = null;
+
 // PUBLIC_INTERFACE
 /**
- * Load notes from localStorage.
+ * Load notes from Supabase on mount.
  */
-function loadNotes() {
-	const stored = localStorage.getItem('notes');
-	notes = stored ? JSON.parse(stored) : [];
+async function loadNotes() {
+	loading = true;
+	error = null;
+	try {
+		const data = await supabaseFetchNotes();
+		notes = data.map((note) => ({
+			...note,
+			created: note.created || note.updated,
+			updated: note.updated,
+		}));
+		// Auto-select first note if possible
+		if (notes.length && !selectedNoteId) {
+			selectedNoteId = notes[0].id;
+		}
+	} catch (e: unknown) {
+		if (e instanceof Error) error = e.message;
+		else error = 'Failed to load notes';
+	} finally {
+		loading = false;
+	}
 }
 
+// PUBLIC_INTERFACE
 /**
- * Save notes to localStorage.
+ * Create a new note in Supabase.
  */
-function saveNotes() {
-	localStorage.setItem('notes', JSON.stringify(notes));
-}
-
-/**
- * Create a new note with a default title/content.
- */
-function createNote() {
-	const now = Date.now();
-	const note: Note = {
-		id: String(now),
+async function createNote() {
+	const now = new Date();
+	const noteData = {
 		title: 'Untitled Note',
 		content: '',
-		created: now,
-		updated: now
+		updated: now.toISOString(),
+		created: now.toISOString()
 	};
-	notes = [note, ...notes];
-	selectedNoteId = note.id;
-	editing = true;
-	saveNotes();
+	loading = true;
+	error = null;
+	try {
+		const note = await supabaseCreateNote(noteData);
+		notes = [note, ...notes];
+		selectedNoteId = note.id;
+		editing = true;
+	} catch (e: unknown) {
+		if (e instanceof Error) error = e.message;
+		else error = 'Failed to create note';
+	} finally {
+		loading = false;
+	}
 }
 
+// PUBLIC_INTERFACE
 /**
- * Update a note in 'notes' by id.
+ * Update a note by id in Supabase.
  */
-function updateNote(id: string, updatedData: Partial<Note>) {
-	notes = notes.map((n) =>
-		n.id === id ? { ...n, ...updatedData, updated: Date.now() } : n
-	);
-	saveNotes();
+async function updateNote(id: string, updatedData: Partial<Note>) {
+	loading = true;
+	error = null;
+	try {
+		const note = await supabaseUpdateNote(id, updatedData);
+		notes = notes.map((n) =>
+			n.id === id ? { ...n, ...note } : n
+		);
+	} catch (e: unknown) {
+		if (e instanceof Error) error = e.message;
+		else error = 'Failed to update note';
+	} finally {
+		loading = false;
+	}
 }
 
+// PUBLIC_INTERFACE
 /**
- * Delete a note by id.
+ * Delete a note by id in Supabase.
  */
-function deleteNote(id: string) {
-	if (confirm('Delete this note?')) {
+async function deleteNote(id: string) {
+	if (!confirm('Delete this note?')) return;
+	loading = true;
+	error = null;
+	try {
+		await supabaseDeleteNote(id);
 		const wasSelected = selectedNoteId === id;
 		notes = notes.filter((n) => n.id !== id);
 		if (wasSelected) {
 			selectedNoteId = notes.length ? notes[0].id : null;
 		}
-		saveNotes();
+	} catch (e: unknown) {
+		if (e instanceof Error) error = e.message;
+		else error = 'Failed to delete note';
+	} finally {
+		loading = false;
 	}
 }
 
+// PUBLIC_INTERFACE
 /**
  * Select a note to view or edit
  */
@@ -98,9 +142,9 @@ onMount(() => {
 // Filter notes by search (if any)
 $: filteredNotes = searchTerm
 	? notes.filter(
-			(n) =>
-				n.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				n.content.toLowerCase().includes(searchTerm.toLowerCase())
+		(n) =>
+			n.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+			n.content?.toLowerCase().includes(searchTerm.toLowerCase())
 	  )
 	: notes;
 
@@ -111,22 +155,32 @@ $: selectedNote = notes.find((n) => n.id === selectedNoteId) ?? null;
 <div class="notes-app-container">
 	<aside class="sidebar">
 		<div class="sidebar-header">
-			<button on:click={createNote} class="create-btn" title="New note">＋</button>
+			<button on:click={createNote} class="create-btn" title="New note" disabled={loading}>＋</button>
 			<input
 				class="search"
 				type="text"
 				placeholder="Search notes"
 				bind:value={searchTerm}
+				disabled={loading}
 			/>
 		</div>
-		<NoteList
-			notes={filteredNotes}
-			selectedId={selectedNoteId}
-			on:select={e => selectNote(e.detail)}
-			on:delete={e => deleteNote(e.detail)}
-		/>
+		{#if loading}
+			<div class="loading-indicator" style="padding: 1rem; text-align:center">
+				Loading...
+			</div>
+		{:else}
+			<NoteList
+				notes={filteredNotes}
+				selectedId={selectedNoteId}
+				on:select={e => selectNote(e.detail)}
+				on:delete={e => deleteNote(e.detail)}
+			/>
+		{/if}
 	</aside>
 	<main class="main-content">
+		{#if error}
+			<div class="error-message">{error}</div>
+		{/if}
 		{#if selectedNote}
 			<NoteEditor
 				note={selectedNote}
@@ -136,7 +190,7 @@ $: selectedNote = notes.find((n) => n.id === selectedNoteId) ?? null;
 				on:cancel={stopEditing}
 				on:delete={() => deleteNote(selectedNote.id)}
 			/>
-		{:else}
+		{:else if !loading}
 			<div class="empty-state">Select or create a note to get started.</div>
 		{/if}
 	</main>
@@ -232,5 +286,18 @@ $: selectedNote = notes.find((n) => n.id === selectedNoteId) ?? null;
 	.main-content {
 		padding: 1.2rem 0.8rem;
 	}
+}
+
+.loading-indicator {
+	color: #3b82f6;
+	font-weight: 500;
+}
+.error-message {
+	color: #e11d48;
+	background: #fbe9f0;
+	border-radius: 6px;
+	padding: 0.8em 1em;
+	margin-bottom: 1rem;
+	text-align: center;
 }
 </style>
